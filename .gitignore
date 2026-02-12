@@ -7,3 +7,9 @@ __pycache__/
 *.pickle
 *.h5
 *.db
+dataset/*.geojson
+dataset/*.csv
+# Ignore dataset files
+dataset/*.geojson
+dataset/*.csv
+dataset/*.zip
