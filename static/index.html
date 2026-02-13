@@ -1,147 +1,315 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Pregnancy Safe Router</title>
+    <title>Pregnancy Safe Router - Nepal</title>
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
     <style>
-        body { margin: 0; padding: 0; font-family: sans-serif; }
-        #map { height: 100vh; width: 100%; }
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Inter', sans-serif;
+        }
+
+        #map {
+            height: 100vh;
+            width: 100%;
+        }
+
         #controls {
             position: absolute;
             top: 10px;
             right: 10px;
-            background: white;
-            padding: 15px;
-            border-radius: 8px;
-            box_shadow: 0 2px 10px rgba(0,0,0,0.2);
+            background: rgba(255, 255, 255, 0.95);
+            backdrop-filter: blur(10px);
+            padding: 20px;
+            border-radius: 12px;
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.15);
             z-index: 1000;
-            width: 300px;
+            width: 340px;
         }
-        .form-group { margin-bottom: 10px; }
-        label { display: block; margin-bottom: 5px; font-weight: bold; }
-        input, select { width: 100%; padding: 8px; box-sizing: border-box; }
+
+        h2 {
+            font-size: 20px;
+            font-weight: 700;
+            color: #1a1a2e;
+            margin-bottom: 16px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        h2::before {
+            content: "🤰";
+        }
+
+        .form-group {
+            margin-bottom: 12px;
+        }
+
+        label {
+            display: block;
+            margin-bottom: 4px;
+            font-weight: 600;
+            font-size: 13px;
+            color: #444;
+        }
+
+        #coords {
+            font-size: 13px;
+            color: #666;
+            padding: 6px 0;
+        }
+
+        input,
+        select {
+            width: 100%;
+            padding: 10px 12px;
+            border: 1.5px solid #ddd;
+            border-radius: 8px;
+            font-size: 14px;
+            font-family: inherit;
+            transition: border-color 0.2s;
+        }
+
+        input:focus,
+        select:focus {
+            outline: none;
+            border-color: #e74c3c;
+        }
+
         button {
             width: 100%;
-            background: #ff6b6b;
+            background: linear-gradient(135deg, #e74c3c, #c0392b);
             color: white;
             border: none;
-            padding: 10px;
-            border-radius: 4px;
+            padding: 12px;
+            border-radius: 8px;
             cursor: pointer;
-            font-size: 16px;
+            font-size: 15px;
+            font-weight: 600;
+            font-family: inherit;
+            transition: transform 0.1s, box-shadow 0.2s;
         }
-        button:hover { background: #ee5253; }
-        #result { margin-top: 15px; font-size: 14px; }
-        .loading { color: #888; font-style: italic; }
+
+        button:hover {
+            transform: translateY(-1px);
+            box-shadow: 0 4px 12px rgba(231, 76, 60, 0.4);
+        }
+
+        button:active {
+            transform: translateY(0);
+        }
+
+        #result {
+            margin-top: 14px;
+            font-size: 13px;
+            line-height: 1.6;
+        }
+
+        .loading {
+            color: #888;
+            font-style: italic;
+        }
+
+        .dest-card {
+            background: #f8f9fa;
+            border-radius: 8px;
+            padding: 12px;
+            margin-top: 10px;
+            border-left: 4px solid #27ae60;
+        }
+
+        .dest-card h4 {
+            font-size: 14px;
+            color: #1a1a2e;
+            margin-bottom: 4px;
+        }
+
+        .dest-card .meta {
+            font-size: 12px;
+            color: #666;
+        }
+
+        .dest-card .meta span {
+            display: inline-block;
+            margin-right: 10px;
+        }
+
+        .route-stats {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 8px;
+            margin-top: 10px;
+        }
+
+        .stat {
+            background: #f0f4ff;
+            padding: 8px 10px;
+            border-radius: 6px;
+            text-align: center;
+        }
+
+        .stat .num {
+            font-size: 18px;
+            font-weight: 700;
+            color: #1a1a2e;
+        }
+
+        .stat .lbl {
+            font-size: 11px;
+            color: #888;
+        }
     </style>
 </head>
+
 <body>
 
-<div id="controls">
-    <h2>Safe Route Finder</h2>
-    
-    <div class="form-group">
-        <label>My Location (Click on Map)</label>
-        <div id="coords">Lat: -, Lon: -</div>
-        <input type="hidden" id="lat">
-        <input type="hidden" id="lon">
+    <div id="controls">
+        <h2>Safe Route Finder</h2>
+
+        <div class="form-group">
+            <label>My Location (Click on Map)</label>
+            <div id="coords">Lat: -, Lon: -</div>
+            <input type="hidden" id="lat">
+            <input type="hidden" id="lon">
+        </div>
+
+        <div class="form-group">
+            <label for="week">Pregnancy Week (1-40)</label>
+            <input type="number" id="week" value="20" min="1" max="42">
+        </div>
+
+        <div class="form-group">
+            <label for="risk">Risk Level</label>
+            <select id="risk">
+                <option value="low">Low Risk</option>
+                <option value="high">High Risk</option>
+            </select>
+        </div>
+
+        <button onclick="findRoute()">🔍 Find Safe Route</button>
+
+        <div id="result"></div>
     </div>
 
-    <div class="form-group">
-        <label for="week">Pregnancy Week (1-40)</label>
-        <input type="number" id="week" value="20" min="1" max="42">
-    </div>
+    <div id="map"></div>
 
-    <div class="form-group">
-        <label for="risk">Risk Level</label>
-        <select id="risk">
-            <option value="low">Low Risk</option>
-            <option value="high">High Risk</option>
-        </select>
-    </div>
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script>
+        const map = L.map('map').setView([27.7172, 85.3240], 13);
 
-    <button onclick="findRoute()">Find Safe Route</button>
-    
-    <div id="result"></div>
-</div>
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+            attribution: '&copy; OpenStreetMap contributors'
+        }).addTo(map);
 
-<div id="map"></div>
+        let startMarker;
+        let routeLayer;
+        let destMarker;
 
-<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-<script>
-    // Initialize map centered on Kathmandu
-    const map = L.map('map').setView([27.7172, 85.3240], 13);
+        map.on('click', function (e) {
+            const lat = e.latlng.lat;
+            const lon = e.latlng.lng;
 
-    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-        attribution: '&copy; OpenStreetMap contributors'
-    }).addTo(map);
+            document.getElementById('lat').value = lat;
+            document.getElementById('lon').value = lon;
+            document.getElementById('coords').innerText = `Lat: ${lat.toFixed(4)}, Lon: ${lon.toFixed(4)}`;
 
-    let startMarker;
-    let routeLayer;
+            if (startMarker) map.removeLayer(startMarker);
+            startMarker = L.marker([lat, lon]).addTo(map).bindPopup("📍 Your Location").openPopup();
+        });
 
-    // Handle map clicks to set start location
-    map.on('click', function(e) {
-        const lat = e.latlng.lat;
-        const lon = e.latlng.lng;
+        async function findRoute() {
+            const lat = document.getElementById('lat').value;
+            const lon = document.getElementById('lon').value;
+            const week = document.getElementById('week').value;
+            const risk = document.getElementById('risk').value;
+            const resultDiv = document.getElementById('result');
 
-        document.getElementById('lat').value = lat;
-        document.getElementById('lon').value = lon;
-        document.getElementById('coords').innerText = `Lat: ${lat.toFixed(4)}, Lon: ${lon.toFixed(4)}`;
-
-        if (startMarker) map.removeLayer(startMarker);
-        startMarker = L.marker([lat, lon]).addTo(map).bindPopup("Start Location").openPopup();
-    });
-
-    async function findRoute() {
-        const lat = document.getElementById('lat').value;
-        const lon = document.getElementById('lon').value;
-        const week = document.getElementById('week').value;
-        const risk = document.getElementById('risk').value;
-        const resultDiv = document.getElementById('result');
-
-        if (!lat || !lon) {
-            alert("Please click on the map to set your location.");
-            return;
-        }
-
-        resultDiv.innerHTML = '<span class="loading">Searching for safest route...</span>';
-        if (routeLayer) map.removeLayer(routeLayer);
-
-        try {
-            const response = await fetch(`/api/route?lat=${lat}&lon=${lon}&week=${week}&risk=${risk}`);
-            
-            if (!response.ok) {
-                const err = await response.json();
-                throw new Error(err.detail || "Route not found");
+            if (!lat || !lon) {
+                alert("Please click on the map to set your location.");
+                return;
             }
 
-            const data = await response.json();
-            
-            // Draw route
-            routeLayer = L.geoJSON(data.route, {
-                style: {
-                    color: risk === 'high' || week > 28 ? '#2ecc71' : '#3498db',
-                    weight: 5
-                }
-            }).addTo(map);
-            
-            map.fitBounds(routeLayer.getBounds());
+            resultDiv.innerHTML = '<span class="loading">Searching for safest route...</span>';
+            if (routeLayer) map.removeLayer(routeLayer);
+            if (destMarker) map.removeLayer(destMarker);
 
-            resultDiv.innerHTML = `
-                <strong>Route Found!</strong><br>
-                Distance: ${(data.distance_meters / 1000).toFixed(2)} km<br>
-                Safety Score: ${data.avg_safety_factor} (Lower is safer)<br>
-                Risk Mode: ${data.is_high_risk ? 'Safety Priority' : 'Standard'}
+            try {
+                const response = await fetch(`/api/route?lat=${lat}&lon=${lon}&week=${week}&risk=${risk}`);
+
+                if (!response.ok) {
+                    const err = await response.json();
+                    throw new Error(err.detail || "Route not found");
+                }
+
+                const data = await response.json();
+                const dest = data.destination || {};
+
+                // Draw route
+                const routeColor = data.is_high_risk ? '#27ae60' : '#3498db';
+                routeLayer = L.geoJSON(data.route, {
+                    style: { color: routeColor, weight: 5, opacity: 0.85 }
+                }).addTo(map);
+
+                // Add destination marker
+                if (dest.lat && dest.lon) {
+                    const hospitalIcon = L.divIcon({
+                        html: '<div style="font-size:24px;">🏥</div>',
+                        iconSize: [30, 30],
+                        className: ''
+                    });
+                    destMarker = L.marker([dest.lat, dest.lon], { icon: hospitalIcon })
+                        .addTo(map)
+                        .bindPopup(`<b>${dest.name}</b><br>${dest.addr_city || ''} ${dest.addr_street || ''}`.trim());
+                }
+
+                map.fitBounds(routeLayer.getBounds().pad(0.1));
+
+                // Build result HTML
+                const distKm = (data.distance_meters / 1000).toFixed(2);
+                const safetyLabel = data.avg_safety_factor <= 1.1 ? '✅ Smooth'
+                    : data.avg_safety_factor <= 1.3 ? '⚠️ Moderate'
+                        : '🔴 Rough';
+
+                let destHtml = '';
+                if (dest.name) {
+                    let address = [dest.addr_city, dest.addr_street].filter(Boolean).join(', ');
+                    destHtml = `
+                    <div class="dest-card">
+                        <h4>${dest.name}</h4>
+                        <div class="meta">
+                            <span>📍 ${address || 'Address not available'}</span>
+                        </div>
+                    </div>
+                `;
+                }
+
+                resultDiv.innerHTML = `
+                <strong style="color:#27ae60;">✅ Route Found!</strong>
+                <div class="route-stats">
+                    <div class="stat"><div class="num">${distKm}</div><div class="lbl">km</div></div>
+                    <div class="stat"><div class="num">${safetyLabel}</div><div class="lbl">Road Quality</div></div>
+                    <div class="stat"><div class="num">${data.is_high_risk ? '⚠️ High' : '✅ Low'}</div><div class="lbl">Risk Mode</div></div>
+                    <div class="stat"><div class="num">${data.avg_safety_factor}</div><div class="lbl">Safety Score</div></div>
+                </div>
+                ${destHtml}
             `;
 
-        } catch (error) {
-            resultDiv.innerHTML = `<span style="color:red">Error: ${error.message}</span>`;
-            console.error(error);
+            } catch (error) {
+                resultDiv.innerHTML = `<span style="color:red">❌ ${error.message}</span>`;
+                console.error(error);
+            }
         }
-    }
-</script>
+    </script>
 
 </body>
+
 </html>

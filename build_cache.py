@@ -6,8 +6,9 @@ def build_cache():
     start_time = time.time()
     
     # Files
-    road_file = 'dataset/hotosm_npl_roads_lines_geojson.geojson'
-    clinic_file = 'dataset/nepal.geojson' # Dummy for init
+    road_file = 'dataset/roads_subset.geojson'
+    clinic_file = 'dataset/nepal_hospitals_full.geojson'
+ # Dummy for init
     
     # Initialize router (triggers build_graph and pickle dump)
     router = SafeRouter(road_file, clinic_file)

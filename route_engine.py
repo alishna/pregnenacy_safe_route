@@ -12,55 +12,37 @@ class SafeRouter:
         """
         self.cache_file = "road_network.pickle"
         
-        # Try to load cached graph
+        # Priority: 1. Cached Graph, 2. Preprocessed Subset, 3. Full GeoJSON
         if os.path.exists(self.cache_file):
             print(f"Loading cached graph from {self.cache_file}...")
             try:
                 with open(self.cache_file, 'rb') as f:
                     self.G = pickle.load(f)
-                print(f"Graph loaded from cache! ({len(self.G.nodes)} nodes)")
-                self.roads_gdf = None # Not needed if graph is loaded
+                print(f"Graph loaded! ({len(self.G.nodes)} nodes)")
+                self.roads_gdf = None
             except Exception as e:
-                print(f"Failed to load cache: {e}. Rebuilding...")
+                print(f"Cache error: {e}. Rebuilding...")
                 self.G = None
         else:
             self.G = None
 
         if self.G is None:
-            # Try to load preprocessed subset first
-            subset_file = 'roads_subset.geojson'
+            subset_file = 'dataset/roads_subset.geojson'
             if os.path.exists(subset_file):
-                print(f"Loading optimized road network from {subset_file}...")
-                try:
-                    self.roads_gdf = gpd.read_file(subset_file)
-                    print(f"Loaded {len(self.roads_gdf)} road segments.")
-                except Exception as e:
-                    print(f"Error loading subset: {e}. Falling back to full file.")
-                    self.roads_gdf = None
+                print(f"Rebuilding graph from optimized subset: {subset_file}")
+                self.roads_gdf = gpd.read_file(subset_file)
             else:
-                self.roads_gdf = None
+                print(f"Loading full road network (Slow): {road_file}")
+                # Filter to Kathmandu area anyway
+                bbox = (85.2, 27.65, 85.45, 27.8) 
+                self.roads_gdf = gpd.read_file(road_file, bbox=bbox)
     
-            if self.roads_gdf is None:
-                print("Loading full road network... this may take a moment.")
-                # Filter to Bagmati/Kathmandu region to speed up loading
-                bbox = (84.0, 26.8, 86.6, 28.5) 
-                try:
-                    self.roads_gdf = gpd.read_file(road_file, bbox=bbox)
-                    print(f"Loaded {len(self.roads_gdf)} road segments in bbox {bbox}")
-                except Exception as e:
-                    raise Exception(f"Failed to load road file: {e}")
-    
-            # Ensure we have a graph
             self.G = self._build_graph()
             
             # Save cache
-            print(f"Saving graph to {self.cache_file}...")
-            try:
-                with open(self.cache_file, 'wb') as f:
-                    pickle.dump(self.G, f)
-                print("Cache saved.")
-            except Exception as e:
-                print(f"Warning: Could not save cache: {e}")
+            print(f"Saving new cache to {self.cache_file}...")
+            with open(self.cache_file, 'wb') as f:
+                pickle.dump(self.G, f)
         
         # Load clinics
         print("Loading clinics...")
@@ -88,20 +70,13 @@ class SafeRouter:
                 # Determine safety factor
                 safety_factor = self._get_safety_factor(surface, highway)
                 
-                # Add edges between coordinates
-                coords = list(geom.coords)
+                # Add edges between coordinates with rounding to fix connectivity gaps
+                coords = [(round(p[0], 6), round(p[1], 6)) for p in geom.coords]
                 for i in range(len(coords) - 1):
                     u = coords[i]
                     v = coords[i+1]
-                    
-                    # Calculate segment length (approximate)
-                    # Optimization: Use Haversine only if needed, or pre-calc
-                    # For now keep existing logic but in faster loop
                     dist = self._haversine(u[1], u[0], v[1], v[0])
-                    
-                    G.add_edge(u, v, 
-                               weight=dist, 
-                               safety_factor=safety_factor)
+                    G.add_edge(u, v, weight=dist, safety_factor=safety_factor)
         
         print(f"Graph built with {len(G.nodes)} nodes and {len(G.edges)} edges.")
         
@@ -168,98 +143,129 @@ class SafeRouter:
         return R * c
 
     def find_nearest_node(self, lat, lon):
-        # Simple Euclidean search (slow for large graphs, optimize with k-d tree later)
-        # For now, just finding min distance
+        """Finds the closest node in the graph to the given lat/lon with rounding."""
+        if not self.G:
+            return None
+            
+        # Round input to match graph
+        lon_r, lat_r = round(lon, 6), round(lat, 6)
+            
         node_list = list(self.G.nodes)
         if not node_list:
             return None
         
-        # Use simple squared euclidean distance for speed comparison
-        closest_node = min(node_list, key=lambda n: (n[1]-lat)**2 + (n[0]-lon)**2)
+        # Use simple squared Euclidean distance for speed
+        closest_node = min(node_list, key=lambda n: (n[1]-lat_r)**2 + (n[0]-lon_r)**2)
         return closest_node
 
     def get_safest_route(self, start_lat, start_lon, week, risk_level):
         """
-        Finds the route.
-        Risk Logic:
-        - High Risk (week > 28 OR risk='high'): Penalize rough roads heavily.
-        - Low Risk: Standard weighting (prefer shortest, but avoid terrible roads).
+        Finds the safest route to the best hospital among any nearby options.
+        
+        Logic:
+        1. Round input coordinates.
+        2. Identify the top 5 spatially-closest clinics.
+        3. For each clinic, find its nearest graph node.
+        4. Calculate the safest path to each of these nodes.
+        5. Return the one with the lowest total weighted cost.
         """
         start_node = self.find_nearest_node(start_lat, start_lon)
-        
-        # Find nearest clinic (destination)
-        # Ideally we iterate through all clinics and find the one with the shortest weighted path
-        # For prototype, let's just find the spatially closest clinic and route to it
+        if not start_node:
+            return None
+            
         if self.clinics_gdf is None or self.clinics_gdf.empty:
             return None
             
-        # Convert clinics points to list of coords
-        # Handle Points and Polygons (use centroid)
-        clinic_coords = []
-        for geom in self.clinics_gdf.geometry:
+        # Build list of (lat, lon, index) for all clinics
+        clinic_info = []
+        for idx, row in self.clinics_gdf.iterrows():
+            geom = row.geometry
             if geom.geom_type == 'Point':
-                clinic_coords.append((geom.y, geom.x))
+                clinic_info.append((geom.y, geom.x, idx))
             else:
-                # Use centroid for Polygons
-                centroid = geom.centroid
-                clinic_coords.append((centroid.y, centroid.x))
+                c = geom.centroid
+                clinic_info.append((c.y, c.x, idx))
         
-        # Find closest clinic in straight line (simplification)
-        # A better approach: Run Dijkstra from start_node to ALL nodes and check clinic nodes.
-        # Or Multi-source Dijkstra.
-        target_clinic = min(clinic_coords, key=lambda c: (c[0]-start_lat)**2 + (c[1]-start_lon)**2)
+        # Find 5 closest clinics spatially
+        # This handles the user requirement: "shortest path even if bumpy" vs "longer safe path"
+        # by letting Dijkstra evaluate the actual cost across several candidates.
+        scored_clinics = sorted(clinic_info, key=lambda c: (c[0]-start_lat)**2 + (c[1]-start_lon)**2)
+        candidates = scored_clinics[:5]
         
-        # Find nearest node to target clinic
-        end_node = self.find_nearest_node(target_clinic[0], target_clinic[1])
-
-        # Define weight function dynamically or based on attributes
         is_high_risk = (risk_level.lower() == 'high') or (week >= 28)
         
         def weight_func(u, v, d):
             base_dist = d.get('weight', 1.0)
             safety = d.get('safety_factor', 1.0)
-            
-            if is_high_risk:
-                # Exponentially penalize bad roads
-                # If safety=1.0 -> weight = dist * 1
-                # If safety=1.3 -> weight = dist * 2 (approx)
-                # If safety=1.8 -> weight = dist * 5 (approx)
-                penalty = safety ** 3 
-            else:
-                penalty = safety
-            
+            penalty = safety ** 2 if is_high_risk else safety
             return base_dist * penalty
 
-        try:
-            path = nx.shortest_path(self.G, source=start_node, target=end_node, weight=weight_func)
-            
-            # Reconstruct geometry
-            path_geom = []
-            total_dist = 0
-            safe_score = 0
-            
-            for i in range(len(path) - 1):
-                u = path[i]
-                v = path[i+1]
-                data = self.G.get_edge_data(u, v)
-                # Get the edge with min weight if multigraph, simplified here for plain Graph
-                edge_data = data # if not multigraph
+        best_result = None
+        min_cost = float('inf')
+
+        for target_lat, target_lon, clinic_idx in candidates:
+            end_node = self.find_nearest_node(target_lat, target_lon)
+            if not end_node:
+                continue
+
+            try:
+                # Find path and total weight (cost)
+                cost, path = nx.single_source_dijkstra(
+                    self.G, source=start_node, target=end_node, weight=weight_func
+                )
                 
-                path_geom.append(LineString([u, v]))
-                total_dist += edge_data.get('weight', 0)
-                safe_score += edge_data.get('safety_factor', 1.0) * edge_data.get('weight', 0)
-            
-            avg_safety = safe_score / total_dist if total_dist > 0 else 1.0
-            
-            from shapely.geometry import MultiLineString
-            route_geojson = gpd.GeoSeries(MultiLineString(path_geom)).__geo_interface__
-            
-            return {
-                "route": route_geojson,
-                "distance_meters": round(total_dist, 2),
-                "avg_safety_factor": round(avg_safety, 2),
-                "is_high_risk": is_high_risk
-            }
-            
-        except nx.NetworkXNoPath:
+                if cost < min_cost:
+                    min_cost = cost
+                    best_result = (path, clinic_idx, target_lat, target_lon)
+            except (nx.NetworkXNoPath, nx.NodeNotFound):
+                continue
+
+        if not best_result:
             return None
+
+        path, clinic_idx, target_lat, target_lon = best_result
+        
+        # Reconstruct geometry
+        path_geom = []
+        click_point = (round(start_lon, 6), round(start_lat, 6))
+        if click_point != path[0]:
+            path_geom.append(LineString([click_point, path[0]]))
+        
+        total_dist = self._haversine(start_lat, start_lon, path[0][1], path[0][0])
+        safe_score = total_dist * 1.0
+        
+        for i in range(len(path) - 1):
+            u, v = path[i], path[i+1]
+            edge_data = self.G.get_edge_data(u, v)
+            path_geom.append(LineString([u, v]))
+            dist = edge_data.get('weight', 0)
+            total_dist += dist
+            safe_score += edge_data.get('safety_factor', 1.0) * dist
+        
+        avg_safety = safe_score / total_dist if total_dist > 0 else 1.0
+        
+        from shapely.geometry import MultiLineString
+        import geopandas as gpd
+        route_geojson = gpd.GeoSeries(MultiLineString(path_geom)).__geo_interface__
+        
+        clinic_row = self.clinics_gdf.loc[clinic_idx]
+        clinic_meta = {
+            "name": str(clinic_row.get('name', 'Unknown')),
+            "amenity": str(clinic_row.get('amenity', '')),
+            "addr_city": str(clinic_row.get('addr_city', '')),
+            "addr_street": str(clinic_row.get('addr_street', '')),
+            "emergency": str(clinic_row.get('emergency', '')),
+            "opening_hours": str(clinic_row.get('opening_hours', '')),
+            "beds": int(clinic_row.get('beds', 0)) if clinic_row.get('beds') else 0,
+            "operator": str(clinic_row.get('operator', '')),
+            "lat": target_lat,
+            "lon": target_lon,
+        }
+        
+        return {
+            "route": route_geojson,
+            "distance_meters": round(total_dist, 2),
+            "avg_safety_factor": round(avg_safety, 2),
+            "is_high_risk": is_high_risk,
+            "destination": clinic_meta,
+        }
