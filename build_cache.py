@@ -6,7 +6,7 @@ def build_cache():
     start_time = time.time()
     
     # Files
-    road_file = 'dataset/roads_subset.geojson'
+    road_file = 'dataset/nepal_roads_full.gpkg'
     clinic_file = 'dataset/nepal_hospitals_full.geojson'
  # Dummy for init
     

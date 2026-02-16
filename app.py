@@ -13,7 +13,7 @@ router = None
 @app.on_event("startup")
 async def startup_event():
     global router
-    road_file = 'dataset/roads_subset.geojson'
+    road_file = 'dataset/nepal_roads_full.gpkg'
     clinic_file = 'dataset/nepal_hospitals_full.geojson'
     
     if os.path.exists(road_file) and os.path.exists(clinic_file):
@@ -31,22 +31,22 @@ async def read_index():
 async def get_route(
     lat: float = Query(..., description="Start Latitude"),
     lon: float = Query(..., description="Start Longitude"),
-    week: int = Query(..., description="Pregnancy Week"),
-    risk: str = Query(..., description="Risk Level (low/high)")
+    week: int = Query(None, description="Pregnancy Week"),
+    mode: str = Query("routine", description="Routing Mode (routine/high_risk/emergency)")
 ):
     global router
     if not router:
         raise HTTPException(status_code=503, detail="Routing engine not initialized")
     
     try:
-        result = router.get_safest_route(lat, lon, week, risk)
-        if not result:
+        results = router.get_safest_route(lat, lon, week, mode)
+        if not results:
             print("No route found.")
             raise HTTPException(status_code=404, detail="No route found")
         
-        # Log a snippet of the result to verify types/content
-        print(f"Route found! Dist: {result['distance_meters']}, High Risk: {result['is_high_risk']}")
-        return result
+        # Log a snippet of the result
+        print(f"Routes found: {len(results)}. Mode: {mode}")
+        return results
     except HTTPException:
         raise
     except Exception as e:
@@ -54,6 +54,14 @@ async def get_route(
         print(f"Error calculating route: {e}")
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/hospitals")
+async def get_hospitals():
+    global router
+    if not router or router.clinics_gdf is None:
+        raise HTTPException(status_code=503, detail="Hospitals not loaded")
+    
+    return router.clinics_gdf.__geo_interface__
 
 # Mount static files
 app.mount("/static", StaticFiles(directory="static"), name="static")
